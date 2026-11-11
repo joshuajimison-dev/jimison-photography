@@ -175,7 +175,7 @@
       queued = false;
       root.classList.toggle('is-scrolled', window.scrollY > 24);
       if (logo) logo.classList.toggle('on-light', lumaBehind(logo) > 0.6);
-      if (nav) header.classList.toggle('on-light', lumaBehind(nav) > 0.6);
+      if (nav) header.classList.toggle('on-light', lumaBehind(nav) > 0.55);
     };
     var queueContrast = function () {
       if (!queued) { queued = true; requestAnimationFrame(updateContrast); }
