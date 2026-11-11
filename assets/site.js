@@ -225,6 +225,20 @@
     }, { threshold: 0.25 }).observe(record.querySelector('.record-map'));
   }
 
+  // Up next and the closing line fade in a step at a time the first time they scroll into view.
+  // Anything already on screen when the page opens is left as it is.
+  if (!reduced && 'IntersectionObserver' in window) {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-reveal]'), function (el) {
+      if (el.getBoundingClientRect().top < window.innerHeight) return;
+      el.classList.add('will-reveal');
+      new IntersectionObserver(function (entries, observer) {
+        if (!entries[0].isIntersecting) return;
+        el.classList.add('is-seen');
+        observer.disconnect();
+      }, { threshold: 0.3 }).observe(el);
+    });
+  }
+
   // Bio book: while a spread is pinned, its photo pans from Josh toward the landscape and its text
   // arrives a line at a time, both tied to how far the page has scrolled (never to a timer, and the
   // scroll itself is left alone). An IntersectionObserver limits the work to spreads near the
