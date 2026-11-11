@@ -123,12 +123,18 @@
     copies.set(img, t);
     return t;
   };
+  // Returns the photo under an element and how much a dark layer above that photo dims it.
   var photoBehind = function (el, r) {
     var found = null;
     [0.2, 0.5, 0.8].some(function (fx) {
-      found = document.elementsFromPoint(r.left + r.width * fx, r.top + r.height / 2).filter(function (o) {
-        return o.tagName === 'IMG' && !el.contains(o) && o.complete && o.naturalWidth && getComputedStyle(o).visibility !== 'hidden';
-      })[0];
+      var dim = 0;
+      document.elementsFromPoint(r.left + r.width * fx, r.top + r.height / 2).some(function (o) {
+        if (el.contains(o)) return false;
+        if (o.classList.contains('bk-shade')) { dim = Math.max(dim, +getComputedStyle(o).opacity || 0); return false; }
+        if (o.tagName !== 'IMG' || !o.complete || !o.naturalWidth || getComputedStyle(o).visibility === 'hidden') return false;
+        found = { img: o, dim: dim };
+        return true;
+      });
       return found;
     });
     return found;
@@ -136,8 +142,11 @@
   var lumaBehind = function (el) {
     var r = el.getBoundingClientRect();
     if (!r.width || !r.height) return 0;
-    var img = photoBehind(el, r);
-    if (!img) return 0; // the dark page itself
+    var hit = photoBehind(el, r);
+    if (!hit) return 0; // the dark page itself
+    return lumaOf(hit.img, r) * (1 - hit.dim);
+  };
+  var lumaOf = function (img, r) {
     if (img.classList.contains('bio-backdrop')) return 0.25; // blurred and dimmed behind a bio photo
     var t = copyOf(img);
     if (!t) return 0;
@@ -214,6 +223,106 @@
       record.classList.add('is-seen');
       observer.disconnect();
     }, { threshold: 0.25 }).observe(record.querySelector('.record-map'));
+  }
+
+  // Bio book: while a spread is pinned, its photo pans from Josh toward the landscape and its text
+  // arrives a line at a time, both tied to how far the page has scrolled (never to a timer, and the
+  // scroll itself is left alone). An IntersectionObserver limits the work to spreads near the
+  // screen; one requestAnimationFrame per scroll does the drawing.
+  var book = document.querySelector('[data-book]');
+  if (book && !reduced) {
+    book.classList.add('bk-live');
+    var clamp01 = function (v) { return v < 0 ? 0 : v > 1 ? 1 : v; };
+    var ease = function (v) { return v * v * (3 - 2 * v); };
+    var spreads = Array.prototype.map.call(book.querySelectorAll('[data-bk]'), function (sec) {
+      var pan = (sec.dataset.pan || '').split(' ').map(Number);
+      return {
+        sec: sec, stage: sec.querySelector('.bk-stage'), photo: sec.querySelector('.bk-photo'),
+        strip: sec.querySelector('.negative-strip'), film: sec.hasAttribute('data-film'),
+        pan: pan.length === 4 ? pan : null, shade: +(sec.dataset.shade || 0.3), near: true
+      };
+    });
+    // Each word gets its own span so the lines can be found wherever the text wraps.
+    var paragraphs = Array.prototype.slice.call(book.querySelectorAll('[data-lines]'));
+    paragraphs.forEach(function (p) {
+      var words = p.textContent.trim().split(/\s+/);
+      p.textContent = '';
+      words.forEach(function (w, i) {
+        var s = document.createElement('span');
+        s.className = 'w';
+        s.textContent = w;
+        p.appendChild(s);
+        if (i < words.length - 1) p.appendChild(document.createTextNode(' '));
+      });
+    });
+    var draw = function () {
+      spreads.forEach(function (s) {
+        if (!s.near) return;
+        var r = s.sec.getBoundingClientRect(), vh = s.stage.clientHeight, y = -r.top;
+        var reveal = clamp01(y / vh); // 0 while the spread before still covers it
+        var life = clamp01(y / r.height); // its whole time on screen, for the pan
+        var t = s.film
+          ? clamp01((y - 0.45 * vh) / Math.max(1, r.height - 1.45 * vh))
+          : clamp01((y - 0.9 * vh) / Math.max(1, (r.height - 2 * vh) * 0.7));
+        s.sec.style.setProperty('--t', t.toFixed(3));
+        s.sec.style.setProperty('--shade', Math.max((1 - reveal) * 0.55, Math.min(1, t * 2.5) * s.shade).toFixed(3));
+        if (s.photo && s.from) {
+          var e = ease(life);
+          s.photo.style.transform = 'translate3d(' + (s.from[0] + (s.to[0] - s.from[0]) * e).toFixed(1) + 'px,' +
+            (s.from[1] + (s.to[1] - s.from[1]) * e).toFixed(1) + 'px,0)';
+        }
+        if (s.strip) s.strip.style.setProperty('--drift', ((0.5 - life) * 0.08 * vh).toFixed(1) + 'px');
+      });
+      if (typeof queueContrast === 'function') queueContrast();
+    };
+    var layout = function () {
+      paragraphs.forEach(function (p) {
+        var line = 0, top = null;
+        Array.prototype.forEach.call(p.querySelectorAll('.w'), function (s) {
+          if (top === null) top = s.offsetTop;
+          else if (s.offsetTop - top > 4) { line++; top = s.offsetTop; }
+          s.style.setProperty('--i', line + 1); // the heading is line 0
+        });
+        p.parentNode.style.setProperty('--n', line + 2);
+      });
+      spreads.forEach(function (s) {
+        if (!s.photo || !s.pan) return;
+        var vw = s.stage.clientWidth, vh = s.stage.clientHeight;
+        var ar = s.photo.getAttribute('width') / s.photo.getAttribute('height');
+        var w = vw, h = vw / ar;
+        if (h < vh) { h = vh; w = vh * ar; }
+        var k = Math.max(1, (1.35 * vh) / h); // on tall screens, enlarge a little so there is room to travel
+        w *= k; h *= k;
+        var at = function (fx, fy) {
+          return [Math.min(0, Math.max(vw - w, vw / 2 - fx * w)), Math.min(0, Math.max(vh - h, vh / 2 - fy * h))];
+        };
+        s.from = at(s.pan[0], s.pan[1]);
+        s.to = at(s.pan[2], s.pan[3]);
+        s.photo.style.width = w + 'px';
+        s.photo.style.height = h + 'px';
+      });
+      draw();
+    };
+    var drawQueued = false;
+    var queueDraw = function () {
+      if (drawQueued) return;
+      drawQueued = true;
+      requestAnimationFrame(function () { drawQueued = false; draw(); });
+    };
+    if ('IntersectionObserver' in window) {
+      var nearby = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          spreads.forEach(function (s) { if (s.sec === en.target) s.near = en.isIntersecting; });
+        });
+        queueDraw();
+      }, { rootMargin: '100% 0px' });
+      spreads.forEach(function (s) { nearby.observe(s.sec); });
+    }
+    window.addEventListener('scroll', queueDraw, { passive: true });
+    window.addEventListener('resize', layout);
+    window.addEventListener('load', layout);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+    layout();
   }
 
   // Casual image saving is discouraged. Nothing fully prevents copying.
