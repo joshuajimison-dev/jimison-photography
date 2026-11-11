@@ -193,6 +193,7 @@ dialog.viewer[data-mode="oak"] .mount { border-image: url("frame-oak.svg") 30 st
 }
 .mount img.is-ready { opacity: 1; }
 .mount img.is-swapping { opacity: 0; transition: none; }
+dialog.viewer:focus { outline: none; }
 dialog.viewer[data-mode="gallery"] .mount img, dialog.viewer[data-mode="oak"] .mount img { box-shadow: 0 0 0 1px rgba(0,0,0,.07); }
 .viewer-modes { display: flex; align-items: center; gap: 8px; min-height: 28px; }
 .viewer-modes button { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; display: grid; place-items: center; transition: box-shadow .25s; }

@@ -357,6 +357,7 @@
       return true;
     });
     var index = 0;
+    viewer.tabIndex = -1; // lets the viewer itself hold focus when it opens
     var $ = function (sel) { return viewer.querySelector(sel); };
     var img = $('.mount img');
     var modeButtons = Array.prototype.slice.call(viewer.querySelectorAll('.viewer-modes [data-mode]'));
@@ -418,6 +419,9 @@
         // Its signature starts white on the black, then turns black as the light wash comes in.
         $('.viewer-sig').classList.remove('on-light');
         viewer.showModal();
+        // The viewer takes focus itself. Otherwise it lands on the signature, its first link, and
+        // Safari rings it in the accent. Tab still reaches every control.
+        viewer.focus({ preventScroll: true });
         var d = items[index].dataset;
         requestAnimationFrame(function () {
           requestAnimationFrame(function () {
