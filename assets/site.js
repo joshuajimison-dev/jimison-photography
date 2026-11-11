@@ -400,8 +400,8 @@
       else { im.addEventListener('load', ready, { once: true }); im.addEventListener('error', ready, { once: true }); }
     };
 
-    // Full screen, on phones only: tapping a portrait photo shows it alone on black, as large as
-    // the screen allows. The signature and the controls stay on top and turn white or black for
+    // Full screen, on phones only: tapping a portrait photo shows it alone, zoomed just enough to
+    // fill the screen. The signature and the controls stay on top and turn white or black for
     // whatever part of the photo sits under them. A tap anywhere else (or Escape) goes back.
     var phoneQuery = window.matchMedia('(max-width: 760px) and (pointer: coarse)');
     var full = document.createElement('div');
@@ -412,17 +412,14 @@
     var sig = $('.viewer-sig'), controls = $('.viewer-controls');
     var isFull = function () { return viewer.classList.contains('is-full'); };
     var isPortrait = function () { return +items[index].dataset.ar < 1; };
-    // How light the photo is under an element; the black around a photo that doesn't reach the
-    // element counts as dark.
+    // Filling the screen can show a photo wider than the screen, so ask for a copy that wide.
+    var fullSizes = function () { return Math.ceil(Math.max(window.innerWidth, window.innerHeight * +items[index].dataset.ar)) + 'px'; };
+    // How light the photo is under an element. The photo fills the whole screen, so there is
+    // always photo under the signature and the controls.
     var fullLuma = function (el) {
-      var r = el.getBoundingClientRect(), b = fullImg.getBoundingClientRect();
+      var r = el.getBoundingClientRect();
       if (!fullImg.naturalWidth || !r.width || !r.height) return 0;
-      var ar = fullImg.naturalWidth / fullImg.naturalHeight;
-      var w = Math.min(b.width, b.height * ar), h = w / ar;
-      var left = b.left + (b.width - w) / 2, top = b.top + (b.height - h) / 2;
-      var ow = Math.min(r.right, left + w) - Math.max(r.left, left), oh = Math.min(r.bottom, top + h) - Math.max(r.top, top);
-      if (ow <= 0 || oh <= 0) return 0;
-      return lumaOf(fullImg, r) * (ow * oh) / (r.width * r.height);
+      return lumaOf(fullImg, r);
     };
     var fullContrast = function () {
       if (!isFull()) return;
@@ -433,7 +430,7 @@
       if (on === isFull()) return;
       viewer.classList.toggle('is-full', on);
       if (on) {
-        swap(fullImg, items[index].dataset, '100vw', fullContrast);
+        swap(fullImg, items[index].dataset, fullSizes(), fullContrast);
       } else {
         sig.classList.add('on-light'); // the normal view sits on a light wash
         controls.classList.remove('on-light');
@@ -457,7 +454,7 @@
       // Moving on while in full screen stays there for another portrait photo, and goes back to
       // the normal view for a landscape one.
       if (isFull()) {
-        if (isPortrait()) swap(fullImg, d, '100vw', fullContrast);
+        if (isPortrait()) swap(fullImg, d, fullSizes(), fullContrast);
         else setFull(false);
       }
       if (!quiet) tint(d.wash, d.ink);
