@@ -2,6 +2,31 @@
   var root = document.documentElement;
   var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  // Welcome photos loop: a copy of the first photo follows the last one, and once the page
+  // settles on that copy it jumps back to the real first photo, so swiping on never ends.
+  var welcomeMain = document.querySelector('.welcome-photos');
+  if (welcomeMain) {
+    var firstSlide = welcomeMain.querySelector('.welcome-photo');
+    var loopCopy = firstSlide.cloneNode(true);
+    loopCopy.setAttribute('aria-hidden', 'true');
+    loopCopy.classList.add('is-loop-copy');
+    loopCopy.querySelectorAll('img').forEach(function (im) {
+      im.alt = '';
+      im.removeAttribute('data-alt-portrait');
+      im.removeAttribute('data-alt-landscape');
+    });
+    welcomeMain.appendChild(loopCopy);
+    var settleTimer = 0;
+    var loopBack = function () {
+      if (window.scrollY >= loopCopy.offsetTop - 2) window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    };
+    window.addEventListener('scroll', function () {
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(loopBack, 140);
+    }, { passive: true });
+    if ('onscrollend' in window) window.addEventListener('scrollend', loopBack);
+  }
+
   // Welcome photos follow screen orientation, and their descriptions follow along.
   var portraitQuery = window.matchMedia('(orientation: portrait)');
   var swapImgs = document.querySelectorAll('img[data-alt-portrait]');
@@ -83,65 +108,84 @@
     requestAnimationFrame(tick);
   });
 
-  // The fixed signature turns black over light photos and white over everything else. It reads
-  // the pixels of whatever photo sits behind it, from a small copy cached per image.
-  var logo = document.querySelector('.logo');
-  if (logo) {
-    var copies = new WeakMap();
-    var copyOf = function (img) {
-      var t = copies.get(img);
-      if (t && t.src === img.currentSrc) return t;
-      var c = document.createElement('canvas');
-      c.width = 64;
-      c.height = Math.max(1, Math.round((64 * img.naturalHeight) / img.naturalWidth));
-      var ctx = c.getContext('2d', { willReadFrequently: true });
-      try { ctx.drawImage(img, 0, 0, c.width, c.height); ctx.getImageData(0, 0, 1, 1); } catch (e) { return null; }
-      t = { src: img.currentSrc, c: c, ctx: ctx };
-      copies.set(img, t);
-      return t;
-    };
-    var photoBehind = function (r) {
-      var found = null;
-      [0.2, 0.5, 0.8].some(function (fx) {
-        found = document.elementsFromPoint(r.left + r.width * fx, r.top + r.height / 2).filter(function (el) {
-          return el.tagName === 'IMG' && !logo.contains(el) && el.complete && el.naturalWidth;
-        })[0];
-        return found;
-      });
+  // The fixed signature and the top menu turn black over light photos and white over everything
+  // else. Each reads the pixels of whatever photo sits behind it, from a small copy cached per image.
+  var copies = new WeakMap();
+  var copyOf = function (img) {
+    var t = copies.get(img);
+    if (t && t.src === img.currentSrc) return t;
+    var c = document.createElement('canvas');
+    c.width = 64;
+    c.height = Math.max(1, Math.round((64 * img.naturalHeight) / img.naturalWidth));
+    var ctx = c.getContext('2d', { willReadFrequently: true });
+    try { ctx.drawImage(img, 0, 0, c.width, c.height); ctx.getImageData(0, 0, 1, 1); } catch (e) { return null; }
+    t = { src: img.currentSrc, c: c, ctx: ctx };
+    copies.set(img, t);
+    return t;
+  };
+  var photoBehind = function (el, r) {
+    var found = null;
+    [0.2, 0.5, 0.8].some(function (fx) {
+      found = document.elementsFromPoint(r.left + r.width * fx, r.top + r.height / 2).filter(function (o) {
+        return o.tagName === 'IMG' && !el.contains(o) && o.complete && o.naturalWidth && getComputedStyle(o).visibility !== 'hidden';
+      })[0];
       return found;
-    };
-    var lumaBehind = function () {
-      var r = logo.getBoundingClientRect(), img = photoBehind(r), t = img && copyOf(img);
-      if (!t) return 0; // the dark page itself
-      // Map the signature's box onto the photo, allowing for object-fit: cover cropping.
-      var ir = img.getBoundingClientRect();
-      var sx = ir.width / t.c.width, sy = ir.height / t.c.height, ox = 0, oy = 0;
-      if (getComputedStyle(img).objectFit === 'cover') {
-        sx = sy = Math.max(sx, sy);
-        ox = (ir.width - t.c.width * sx) / 2;
-        oy = (ir.height - t.c.height * sy) / 2;
+    });
+    return found;
+  };
+  var lumaBehind = function (el) {
+    var r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return 0;
+    var img = photoBehind(el, r);
+    if (!img) return 0; // the dark page itself
+    if (img.classList.contains('bio-backdrop')) return 0.25; // blurred and dimmed behind a bio photo
+    var t = copyOf(img);
+    if (!t) return 0;
+    // Map the element's box onto the photo, allowing for object-fit cropping or letterboxing.
+    var ir = img.getBoundingClientRect();
+    var sx = ir.width / t.c.width, sy = ir.height / t.c.height, ox = 0, oy = 0;
+    var fit = getComputedStyle(img).objectFit;
+    if (fit === 'cover' || fit === 'contain') {
+      sx = sy = fit === 'cover' ? Math.max(sx, sy) : Math.min(sx, sy);
+      ox = (ir.width - t.c.width * sx) / 2;
+      oy = (ir.height - t.c.height * sy) / 2;
+      if (fit === 'cover') {
+        var pos = getComputedStyle(img).objectPosition.split(' ').map(parseFloat);
+        if (pos.length === 2 && !isNaN(pos[0]) && !isNaN(pos[1])) {
+          ox = (ir.width - t.c.width * sx) * pos[0] / 100;
+          oy = (ir.height - t.c.height * sy) * pos[1] / 100;
+        }
       }
-      var x0 = Math.max(0, Math.floor((Math.max(r.left, ir.left) - ir.left - ox) / sx));
-      var x1 = Math.min(t.c.width, Math.ceil((Math.min(r.right, ir.right) - ir.left - ox) / sx));
-      var y0 = Math.max(0, Math.floor((Math.max(r.top, ir.top) - ir.top - oy) / sy));
-      var y1 = Math.min(t.c.height, Math.ceil((Math.min(r.bottom, ir.bottom) - ir.top - oy) / sy));
-      if (x1 <= x0 || y1 <= y0) return 0;
-      var d = t.ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data, sum = 0;
-      for (var i = 0; i < d.length; i += 4) sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
-      return sum / (d.length / 4) / 255;
-    };
+    }
+    var x0 = Math.max(0, Math.floor((Math.max(r.left, ir.left) - ir.left - ox) / sx));
+    var x1 = Math.min(t.c.width, Math.ceil((Math.min(r.right, ir.right) - ir.left - ox) / sx));
+    var y0 = Math.max(0, Math.floor((Math.max(r.top, ir.top) - ir.top - oy) / sy));
+    var y1 = Math.min(t.c.height, Math.ceil((Math.min(r.bottom, ir.bottom) - ir.top - oy) / sy));
+    if (x1 <= x0 || y1 <= y0) return 0;
+    var d = t.ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data, sum = 0;
+    for (var i = 0; i < d.length; i += 4) sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+    return sum / (d.length / 4) / 255;
+  };
+  var logo = document.querySelector('.logo');
+  var header = document.querySelector('.site-header');
+  var nav = header && header.querySelector('.site-nav');
+  if (logo || nav) {
     var queued = false;
-    var updateLogo = function () {
+    var updateContrast = function () {
       queued = false;
-      logo.classList.toggle('on-light', lumaBehind() > 0.6);
+      root.classList.toggle('is-scrolled', window.scrollY > 24);
+      if (logo) logo.classList.toggle('on-light', lumaBehind(logo) > 0.6);
+      if (nav) header.classList.toggle('on-light', lumaBehind(nav) > 0.6);
     };
-    var queueLogo = function () {
-      if (!queued) { queued = true; requestAnimationFrame(updateLogo); }
+    var queueContrast = function () {
+      if (!queued) { queued = true; requestAnimationFrame(updateContrast); }
     };
-    window.addEventListener('scroll', queueLogo, { passive: true });
-    window.addEventListener('resize', queueLogo);
-    document.addEventListener('load', queueLogo, true); // a photo behind it finished loading
-    updateLogo();
+    window.addEventListener('scroll', queueContrast, { passive: true });
+    window.addEventListener('resize', queueContrast);
+    document.addEventListener('load', queueContrast, true); // a photo behind it finished loading
+    // The menu changes shape as the page scrolls, so read again once it has settled.
+    if (header) header.addEventListener('transitionend', queueContrast);
+    updateContrast();
   }
 
   // Bio chapters: related photos fan out around the main one as it nears the middle of the screen.
@@ -248,6 +292,32 @@
       if (e.key === 'ArrowLeft') show(index - 1);
       if (e.key === 'ArrowRight') show(index + 1);
     });
+    // Swipe left or right on the photo to move to the next or previous one.
+    var touchStart = null;
+    viewer.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) { touchStart = null; return; }
+      touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+    }, { passive: true });
+    viewer.addEventListener('touchend', function (e) {
+      if (!touchStart || !e.changedTouches.length) return;
+      var dx = e.changedTouches[0].clientX - touchStart.x, dy = e.changedTouches[0].clientY - touchStart.y;
+      var quick = Date.now() - touchStart.t < 800;
+      touchStart = null;
+      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.3 && quick) show(index + (dx < 0 ? 1 : -1));
+    }, { passive: true });
+    // A sideways two-finger scroll on a trackpad does the same, one photo per gesture.
+    var wheelSum = 0, wheelLock = 0;
+    viewer.addEventListener('wheel', function (e) {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      if (Date.now() < wheelLock) return;
+      wheelSum += e.deltaX;
+      if (Math.abs(wheelSum) > 60) {
+        show(index + (wheelSum > 0 ? 1 : -1));
+        wheelSum = 0;
+        wheelLock = Date.now() + 600;
+      }
+    }, { passive: false });
   }
 
   // The World: dots and labels sit over an inline map that flies between views.

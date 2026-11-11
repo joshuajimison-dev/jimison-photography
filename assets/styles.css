@@ -35,12 +35,13 @@ p { text-wrap: pretty; }
 
 /* Header */
 .site-header {
-  position: absolute; inset: 0 0 auto; z-index: 5;
+  position: fixed; inset: 0 0 auto; z-index: 5; pointer-events: none; color: var(--white);
+  transition: color .4s ease, padding .35s ease;
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 24px;
   padding-top: clamp(14px, 2vw, 24px); padding-bottom: 14px;
 }
 /* The signature stays fixed in the corner as pages scroll; the header keeps a matching space for it */
-.logo, .logo-space { display: block; width: clamp(112px, 10vw, 150px); }
+.logo, .logo-space { display: block; width: clamp(112px, 10vw, 150px); transition: width .35s ease, top .35s ease; }
 .logo { position: fixed; z-index: 6; top: clamp(14px, 2vw, 24px); left: max(var(--pad), var(--gutter-l)); }
 .logo-space { aspect-ratio: 900 / 297; }
 
@@ -49,7 +50,14 @@ p { text-wrap: pretty; }
 .signature img { grid-area: 1 / 1; width: 100%; height: auto; transition: opacity .6s ease; }
 .signature .sig-black, .on-light .signature .sig-white, .signature.on-light .sig-white { opacity: 0; }
 .on-light .signature .sig-black, .signature.on-light .sig-black { opacity: 1; }
-.site-nav { display: flex; gap: clamp(14px, 2.6vw, 38px); font-size: 14px; }
+.site-nav { display: flex; gap: clamp(14px, 2.6vw, 38px); font-size: 14px; transition: gap .35s ease, font-size .35s ease; }
+/* The menu stays at the top while the page scrolls. It turns black over light photos, and a soft
+   shadow keeps it readable over busy ones. */
+.site-header .site-nav a { pointer-events: auto; text-shadow: 0 1px 2px rgba(0,0,0,.35), 0 0 18px rgba(0,0,0,.35); transition: border-color .2s, text-shadow .4s ease; }
+.site-header.on-light { color: #0b0c0c; }
+.site-header.on-light .site-nav a { text-shadow: 0 1px 2px rgba(255,255,255,.35), 0 0 18px rgba(255,255,255,.4); }
+.welcome-sig { pointer-events: auto; text-decoration: none; }
+.viewer-sig { text-decoration: none; }
 .site-nav a { text-decoration: none; padding: 8px 0; border-bottom: 1px solid transparent; white-space: nowrap; transition: border-color .2s; }
 .site-nav a:hover, .site-nav a[aria-current="page"] { border-bottom-color: var(--accent); }
 
@@ -165,7 +173,7 @@ dialog.viewer::backdrop { background: var(--black); }
 dialog.viewer[data-mode="gallery"], dialog.viewer[data-mode="oak"] { background: var(--wall); color: #161717; --mat: clamp(16px, 3.6vmin, 54px); }
 dialog.viewer[data-mode="gallery"] { --fw: clamp(9px, 1.2vmin, 15px); }
 dialog.viewer[data-mode="oak"] { --fw: clamp(12px, 1.8vmin, 22px); }
-.viewer-sig { position: absolute; z-index: 3; top: max(18px, env(safe-area-inset-top, 0px)); left: max(22px, var(--gutter-l)); width: clamp(92px, 8vw, 120px); pointer-events: none; }
+.viewer-sig { position: absolute; z-index: 3; top: max(18px, env(safe-area-inset-top, 0px)); left: max(22px, var(--gutter-l)); width: clamp(92px, 8vw, 120px); }
 .viewer-stage { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 0; min-width: 0; padding: var(--top) var(--space) var(--space); overflow: hidden; }
 .mount { position: relative; flex: none; padding: var(--mat); border: var(--fw) solid transparent; background: transparent padding-box; transition: padding .7s cubic-bezier(.2,.7,.2,1), border-width .7s cubic-bezier(.2,.7,.2,1), background-color .7s ease, box-shadow .7s ease; }
 dialog.viewer[data-mode="gallery"] .mount, dialog.viewer[data-mode="oak"] .mount { background-color: #fbfaf7; box-shadow: 0 2px 3px rgba(0,0,0,.16), 0 34px 60px -30px rgba(0,0,0,.55), inset 0 3px 9px rgba(0,0,0,.16); }
@@ -268,6 +276,24 @@ form.inquiry { display: grid; grid-template-columns: 1fr 1fr; gap: 28px clamp(16
 .submit:hover, .submit:focus-visible { background: var(--accent); border-color: var(--accent); color: var(--black); }
 .form-status { grid-column: 1 / -1; font-size: 14px; color: var(--text); }
 
+/* Bio: each photo of Josh fills the screen, with a short paragraph over it. A tall photo on a wide
+   screen shows whole, over a blurred copy of itself, so nothing important is cropped away. */
+.bio-panel { position: relative; display: flex; align-items: flex-end; height: 100vh; height: 100svh; min-height: 480px; overflow: hidden; background: var(--black); color: #fff; }
+.bio-panel img { position: absolute; inset: 0; width: 100%; height: 100%; }
+.bio-photo { object-fit: cover; object-position: var(--focus, 50% 50%); }
+.bio-backdrop { display: none; object-fit: cover; filter: blur(26px) brightness(.5); transform: scale(1.12); }
+@media (orientation: landscape) {
+  .is-portrait .bio-backdrop { display: block; }
+  .is-portrait .bio-photo { object-fit: contain; }
+}
+.bio-panel-text { position: relative; z-index: 2; width: 100%; display: grid; gap: 14px; padding-top: 34vh; padding-bottom: max(clamp(40px, 8vh, 96px), calc(env(safe-area-inset-bottom, 0px) + 24px)); background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.62)); }
+.bio-panel-text h1 { font-size: clamp(48px, 7.4vw, 120px); }
+.bio-panel-text h2 { font-size: var(--title); }
+.bio-panel-text h1, .bio-panel-text h2, .bio-panel-text p { max-width: 30rem; text-shadow: 0 1px 2px rgba(0,0,0,.4), 0 2px 24px rgba(0,0,0,.45); }
+.bio-panel-text p { font-size: clamp(17px, 1.45vw, 21px); line-height: 1.5; color: rgba(255,255,255,.92); }
+@media (min-width: 761px) and (orientation: landscape) { .bio-panel-text h1, .bio-panel-text h2, .bio-panel-text p { max-width: 36rem; } }
+.bio-v2 .record { padding-top: clamp(80px, 10vw, 150px); }
+
 /* Footer */
 .site-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 32px; padding-top: 40px; padding-bottom: 32px; font-size: 13px; color: var(--muted); }
 .site-footer nav { display: flex; flex-wrap: wrap; gap: 8px 24px; }
@@ -290,6 +316,10 @@ form.inquiry { display: grid; grid-template-columns: 1fr 1fr; gap: 28px clamp(16
   .world-head, .page-head, .contact { padding-top: 136px; }
   .field.full, .form-status { grid-column: auto; }
   .site-nav { width: 100%; justify-content: space-between; gap: 8px; font-size: 13px; }
+  .is-scrolled .site-header { flex-wrap: nowrap; padding-top: 10px; padding-bottom: 6px; }
+  .is-scrolled .logo, .is-scrolled .logo-space { width: 84px; }
+  .is-scrolled .logo { top: 10px; }
+  .is-scrolled .site-nav { width: auto; justify-content: flex-end; gap: 14px; font-size: 12px; }
   .atlas-dot { width: 22px; height: 22px; }
   .atlas-dot::before { width: 7px; height: 7px; }
   .atlas-home, .atlas-label { font-size: 11px; }
@@ -305,4 +335,12 @@ form.inquiry { display: grid; grid-template-columns: 1fr 1fr; gap: 28px clamp(16
   .atlas-arcs path { stroke-dashoffset: 0; }
   .record.will-reveal .record-visited > * { opacity: 1; }
   .record.will-reveal .tally path { stroke-dashoffset: 0; }
+}
+
+/* Tall screens wider than a phone (a tablet held upright) tighten the same way once scrolled. */
+@media (orientation: portrait) and (min-width: 761px) {
+  .is-scrolled .site-header { padding-top: 10px; padding-bottom: 6px; }
+  .is-scrolled .logo, .is-scrolled .logo-space { width: 96px; }
+  .is-scrolled .logo { top: 10px; }
+  .is-scrolled .site-nav { gap: 18px; font-size: 13px; }
 }
