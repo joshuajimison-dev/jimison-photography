@@ -371,16 +371,35 @@
       viewer.style.setProperty('--wash', wash);
       viewer.style.setProperty('--ink', ink);
     };
-    img.addEventListener('load', function () { img.classList.add('is-ready'); });
+    // Every photo fades in, including one the browser already has. The hidden state is drawn for
+    // at least a frame before the fade starts; without that, a cached photo skips straight to full
+    // opacity. swapId drops a reveal that a quicker swipe has already replaced.
+    var swapId = 0;
+    var reveal = function (id) {
+      if (id !== swapId) return;
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          if (id !== swapId) return;
+          img.classList.remove('is-swapping');
+          img.classList.add('is-ready');
+        });
+      });
+    };
     var show = function (i, quiet) {
       index = (i + items.length) % items.length;
       var d = items[index].dataset;
+      var id = ++swapId;
       img.classList.remove('is-ready');
+      img.classList.add('is-swapping');
+      void img.offsetWidth; // commit the hidden state before the new photo arrives
       img.srcset = d.srcset || '';
       img.sizes = '(max-width: 760px) 100vw, calc(100vw - 340px)';
       img.src = d.src;
       img.alt = d.alt;
-      if (img.complete && img.naturalWidth) img.classList.add('is-ready');
+      var ready = function () { reveal(id); };
+      if (img.decode) img.decode().then(ready, ready);
+      else if (img.complete && img.naturalWidth) ready();
+      else { img.addEventListener('load', ready, { once: true }); img.addEventListener('error', ready, { once: true }); }
       if (!quiet) tint(d.wash, d.ink);
       $('.viewer-title').textContent = d.title;
       $('.viewer-location').textContent = d.location || '';
