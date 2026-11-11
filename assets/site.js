@@ -45,9 +45,13 @@
   if (overlay) {
     var slides = document.querySelectorAll('.welcome-photo');
     var setContrast = function () {
-      var i = Math.min(slides.length - 1, Math.max(0, Math.round(window.scrollY / window.innerHeight)));
-      var luma = +(portraitQuery.matches ? slides[i].dataset.lumaPortrait : slides[i].dataset.luma);
-      overlay.classList.toggle('on-light', luma > 0.58);
+      var i = Math.min(slides.length - 1, Math.max(0, Math.round(window.scrollY / (window.innerHeight || 1))));
+      var d = slides[i].dataset;
+      var luma = +(portraitQuery.matches ? d.lumaPortrait : d.luma);
+      // data-ink / data-ink-portrait ("black" or "white") override the measured brightness for a photo
+      // where the average misleads, such as a light sky behind the text over a darker scene.
+      var ink = portraitQuery.matches ? d.inkPortrait : d.ink;
+      overlay.classList.toggle('on-light', ink ? ink === 'black' : luma > 0.58);
     };
     window.addEventListener('scroll', setContrast, { passive: true });
     window.addEventListener('resize', setContrast);
@@ -400,10 +404,13 @@
       else { im.addEventListener('load', ready, { once: true }); im.addEventListener('error', ready, { once: true }); }
     };
 
-    // Full screen, on phones only: tapping a portrait photo shows it alone, zoomed just enough to
-    // fill the screen. The signature and the controls stay on top and turn white or black for
-    // whatever part of the photo sits under them. A tap anywhere else (or Escape) goes back.
+    // Full screen: tapping a photo whose shape matches the screen shows it alone, zoomed just
+    // enough to fill the screen. That is a portrait photo on a phone held upright, or a landscape
+    // photo on any landscape screen (a phone on its side, a tablet or a laptop). The signature and
+    // the controls stay on top and turn white or black for whatever part of the photo sits under
+    // them. Tapping the photo again (or Escape) goes back.
     var phoneQuery = window.matchMedia('(max-width: 760px) and (pointer: coarse)');
+    var landscapeQuery = window.matchMedia('(orientation: landscape)');
     var full = document.createElement('div');
     full.className = 'viewer-full';
     full.innerHTML = '<img alt="" draggable="false">';
@@ -412,6 +419,10 @@
     var sig = $('.viewer-sig'), controls = $('.viewer-controls');
     var isFull = function () { return viewer.classList.contains('is-full'); };
     var isPortrait = function () { return +items[index].dataset.ar < 1; };
+    var fits = function () {
+      return isPortrait() ? phoneQuery.matches && !landscapeQuery.matches : landscapeQuery.matches;
+    };
+    var markFits = function () { viewer.classList.toggle('can-full', fits()); };
     // Filling the screen can show a photo wider than the screen, so ask for a copy that wide.
     var fullSizes = function () { return Math.ceil(Math.max(window.innerWidth, window.innerHeight * +items[index].dataset.ar)) + 'px'; };
     // How light the photo is under an element. The photo fills the whole screen, so there is
@@ -437,24 +448,31 @@
       }
     };
     img.addEventListener('click', function () {
-      if (phoneQuery.matches && isPortrait() && img.classList.contains('is-ready')) setFull(true);
+      if (fits() && img.classList.contains('is-ready')) setFull(true);
     });
     full.addEventListener('click', function () { setFull(false); });
     viewer.addEventListener('cancel', function (e) {
       if (isFull()) { e.preventDefault(); setFull(false); }
     });
     viewer.addEventListener('close', function () { setFull(false); });
-    phoneQuery.addEventListener('change', function () { if (!phoneQuery.matches) setFull(false); });
+    // Turning the phone (or resizing the window) can change which photos fit the screen.
+    var screenChanged = function () {
+      markFits();
+      if (isFull() && !fits()) setFull(false);
+    };
+    phoneQuery.addEventListener('change', screenChanged);
+    landscapeQuery.addEventListener('change', screenChanged);
     window.addEventListener('resize', fullContrast);
 
     var show = function (i, quiet) {
       index = (i + items.length) % items.length;
       var d = items[index].dataset;
       swap(img, d, '(max-width: 760px) 100vw, calc(100vw - 340px)');
-      // Moving on while in full screen stays there for another portrait photo, and goes back to
-      // the normal view for a landscape one.
+      markFits();
+      // Moving on while in full screen stays there while the next photo also fits the screen,
+      // and goes back to the normal view when it doesn't.
       if (isFull()) {
-        if (isPortrait()) swap(fullImg, d, fullSizes(), fullContrast);
+        if (fits()) swap(fullImg, d, fullSizes(), fullContrast);
         else setFull(false);
       }
       if (!quiet) tint(d.wash, d.ink);
