@@ -1,0 +1,389 @@
+(function () {
+  var root = document.documentElement;
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Welcome photos follow screen orientation, and their descriptions follow along.
+  var portraitQuery = window.matchMedia('(orientation: portrait)');
+  var swapImgs = document.querySelectorAll('img[data-alt-portrait]');
+  if (swapImgs.length) {
+    var setAlts = function () {
+      swapImgs.forEach(function (img) {
+        img.alt = portraitQuery.matches ? img.dataset.altPortrait : img.dataset.altLandscape;
+      });
+    };
+    setAlts();
+    portraitQuery.addEventListener('change', setAlts);
+  }
+
+  // Welcome type and signature turn black over light photos and stay white over dark ones.
+  var overlay = document.querySelector('.welcome-overlay');
+  if (overlay) {
+    var slides = document.querySelectorAll('.welcome-photo');
+    var setContrast = function () {
+      var i = Math.min(slides.length - 1, Math.max(0, Math.round(window.scrollY / window.innerHeight)));
+      var luma = +(portraitQuery.matches ? slides[i].dataset.lumaPortrait : slides[i].dataset.luma);
+      overlay.classList.toggle('on-light', luma > 0.58);
+    };
+    window.addEventListener('scroll', setContrast, { passive: true });
+    window.addEventListener('resize', setContrast);
+    portraitQuery.addEventListener('change', setContrast);
+    setContrast();
+  }
+
+  // Gallery strips: each moves on its own, eases to a stop under the pointer, and loops.
+  // A landscape screen shows one tall strip; a portrait screen shows three thinner rows,
+  // the middle one running the other way. Only the strips on screen move.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-strip]'), function (strip) {
+    var frames = strip.querySelectorAll('.frame');
+    var loopWidth = function () { return frames[frames.length / 2].offsetLeft - frames[0].offsetLeft; };
+    var CRUISE = +strip.dataset.speed * (strip.hasAttribute('data-reverse') ? -1 : 1); // pixels per second
+    var pos = 0, speed = reduced ? 0 : CRUISE, holdUntil = 0, lastTime = 0, pointer = null, started = false;
+    var wrap = function () {
+      var w = loopWidth();
+      if (pos >= w) pos -= w;
+      if (pos < 0) pos += w;
+    };
+    // Only real mouse movement holds the strip. A pointer left resting over it after
+    // clicking Enter must not freeze it, and a still pointer lets it move on after a while.
+    strip.addEventListener('mousemove', function (e) {
+      var moved = pointer && (pointer.x !== e.screenX || pointer.y !== e.screenY);
+      pointer = { x: e.screenX, y: e.screenY };
+      if (moved) holdUntil = Date.now() + 5000;
+    });
+    strip.addEventListener('mouseleave', function () { holdUntil = 0; pointer = null; });
+    strip.addEventListener('touchstart', function () { holdUntil = Infinity; }, { passive: true });
+    strip.addEventListener('touchend', function () { holdUntil = Date.now() + 2500; }, { passive: true });
+    strip.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      pos += e.deltaX || e.deltaY;
+      wrap();
+      strip.scrollLeft = pos;
+      holdUntil = Date.now() + 1500;
+    }, { passive: false });
+    strip.addEventListener('scroll', function () {
+      if (Math.abs(strip.scrollLeft - pos) > 2) { pos = strip.scrollLeft; wrap(); }
+    }, { passive: true });
+    var tick = function (now) {
+      var dt = Math.min(0.05, (now - lastTime) / 1000 || 0);
+      lastTime = now;
+      requestAnimationFrame(tick);
+      if (!strip.offsetParent) return; // this layout is hidden at the current orientation
+      // Rows start partway through their loops, so photo edges don't line up between rows.
+      if (!started) { started = true; pos = loopWidth() * (+strip.dataset.offset || 0); strip.scrollLeft = pos; }
+      var active = document.activeElement;
+      var paused = reduced || Date.now() < holdUntil || document.querySelector('dialog[open]') ||
+        (strip.contains(active) && active.matches('.frame:focus-visible'));
+      speed += ((paused ? 0 : CRUISE) - speed) * Math.min(1, dt * 5);
+      if (Math.abs(speed) > 0.5) {
+        pos += speed * dt;
+        wrap();
+        strip.scrollLeft = pos;
+      }
+    };
+    requestAnimationFrame(tick);
+  });
+
+  // The fixed signature turns black over light photos and white over everything else. It reads
+  // the pixels of whatever photo sits behind it, from a small copy cached per image.
+  var logo = document.querySelector('.logo');
+  if (logo) {
+    var copies = new WeakMap();
+    var copyOf = function (img) {
+      var t = copies.get(img);
+      if (t && t.src === img.currentSrc) return t;
+      var c = document.createElement('canvas');
+      c.width = 64;
+      c.height = Math.max(1, Math.round((64 * img.naturalHeight) / img.naturalWidth));
+      var ctx = c.getContext('2d', { willReadFrequently: true });
+      try { ctx.drawImage(img, 0, 0, c.width, c.height); ctx.getImageData(0, 0, 1, 1); } catch (e) { return null; }
+      t = { src: img.currentSrc, c: c, ctx: ctx };
+      copies.set(img, t);
+      return t;
+    };
+    var photoBehind = function (r) {
+      var found = null;
+      [0.2, 0.5, 0.8].some(function (fx) {
+        found = document.elementsFromPoint(r.left + r.width * fx, r.top + r.height / 2).filter(function (el) {
+          return el.tagName === 'IMG' && !logo.contains(el) && el.complete && el.naturalWidth;
+        })[0];
+        return found;
+      });
+      return found;
+    };
+    var lumaBehind = function () {
+      var r = logo.getBoundingClientRect(), img = photoBehind(r), t = img && copyOf(img);
+      if (!t) return 0; // the dark page itself
+      // Map the signature's box onto the photo, allowing for object-fit: cover cropping.
+      var ir = img.getBoundingClientRect();
+      var sx = ir.width / t.c.width, sy = ir.height / t.c.height, ox = 0, oy = 0;
+      if (getComputedStyle(img).objectFit === 'cover') {
+        sx = sy = Math.max(sx, sy);
+        ox = (ir.width - t.c.width * sx) / 2;
+        oy = (ir.height - t.c.height * sy) / 2;
+      }
+      var x0 = Math.max(0, Math.floor((Math.max(r.left, ir.left) - ir.left - ox) / sx));
+      var x1 = Math.min(t.c.width, Math.ceil((Math.min(r.right, ir.right) - ir.left - ox) / sx));
+      var y0 = Math.max(0, Math.floor((Math.max(r.top, ir.top) - ir.top - oy) / sy));
+      var y1 = Math.min(t.c.height, Math.ceil((Math.min(r.bottom, ir.bottom) - ir.top - oy) / sy));
+      if (x1 <= x0 || y1 <= y0) return 0;
+      var d = t.ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data, sum = 0;
+      for (var i = 0; i < d.length; i += 4) sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      return sum / (d.length / 4) / 255;
+    };
+    var queued = false;
+    var updateLogo = function () {
+      queued = false;
+      logo.classList.toggle('on-light', lumaBehind() > 0.6);
+    };
+    var queueLogo = function () {
+      if (!queued) { queued = true; requestAnimationFrame(updateLogo); }
+    };
+    window.addEventListener('scroll', queueLogo, { passive: true });
+    window.addEventListener('resize', queueLogo);
+    document.addEventListener('load', queueLogo, true); // a photo behind it finished loading
+    updateLogo();
+  }
+
+  // Bio chapters: related photos fan out around the main one as it nears the middle of the screen.
+  var fans = document.querySelectorAll('[data-fan]');
+  if (fans.length && !reduced) {
+    var spreadFans = function () {
+      var mid = window.innerHeight / 2;
+      fans.forEach(function (f) {
+        var r = f.getBoundingClientRect();
+        var off = Math.abs(r.top + r.height / 2 - mid) / window.innerHeight; // 0 at the middle
+        var p = Math.max(0, Math.min(1, (0.62 - off) / 0.4));
+        f.style.setProperty('--p', (p * p * (3 - 2 * p)).toFixed(3));
+      });
+    };
+    window.addEventListener('scroll', function () { requestAnimationFrame(spreadFans); }, { passive: true });
+    window.addEventListener('resize', spreadFans);
+    spreadFans();
+  }
+
+  // The record's countries light up one after another when its map first scrolls into view.
+  var record = document.querySelector('[data-record]');
+  if (record && !reduced && 'IntersectionObserver' in window && record.getBoundingClientRect().top > window.innerHeight) {
+    record.classList.add('will-reveal');
+    new IntersectionObserver(function (entries, observer) {
+      if (!entries[0].isIntersecting) return;
+      record.classList.add('is-seen');
+      observer.disconnect();
+    }, { threshold: 0.25 }).observe(record.querySelector('.record-map'));
+  }
+
+  // Casual image saving is discouraged. Nothing fully prevents copying.
+  document.addEventListener('contextmenu', function (e) {
+    if (e.target.tagName === 'IMG') e.preventDefault();
+  });
+
+  // Photo viewer, shared by the gallery, collection pages and the world map. It opens on black,
+  // then the screen washes into a soft version of the photo's own color. The circles under the
+  // photo switch to a gallery wall with a black or oak frame, which holds while browsing.
+  var viewer = document.getElementById('viewer');
+  if (viewer) {
+    var triggers = Array.prototype.slice.call(document.querySelectorAll('[data-photo]'));
+    var seen = {};
+    var items = triggers.filter(function (t) {
+      if (seen[t.dataset.photo]) return false;
+      seen[t.dataset.photo] = true;
+      return true;
+    });
+    var index = 0;
+    var $ = function (sel) { return viewer.querySelector(sel); };
+    var img = $('.mount img');
+    var modeButtons = Array.prototype.slice.call(viewer.querySelectorAll('.viewer-modes [data-mode]'));
+    var setMode = function (mode) {
+      viewer.dataset.mode = mode;
+      modeButtons.forEach(function (b) { b.setAttribute('aria-checked', String(b.dataset.mode === mode)); });
+    };
+    modeButtons.forEach(function (b) {
+      b.addEventListener('click', function () { setMode(b.dataset.mode); });
+    });
+    var tint = function (wash, ink) {
+      viewer.style.setProperty('--wash', wash);
+      viewer.style.setProperty('--ink', ink);
+    };
+    img.addEventListener('load', function () { img.classList.add('is-ready'); });
+    var show = function (i, quiet) {
+      index = (i + items.length) % items.length;
+      var d = items[index].dataset;
+      img.classList.remove('is-ready');
+      img.srcset = d.srcset || '';
+      img.sizes = '(max-width: 760px) 100vw, calc(100vw - 340px)';
+      img.src = d.src;
+      img.alt = d.alt;
+      if (img.complete && img.naturalWidth) img.classList.add('is-ready');
+      if (!quiet) tint(d.wash, d.ink);
+      $('.viewer-title').textContent = d.title;
+      $('.viewer-location').textContent = d.location || '';
+      $('.viewer-location').hidden = !d.location;
+      $('.viewer-coords').textContent = d.coords || '';
+      $('.viewer-coords').hidden = !d.coords;
+      $('.viewer-story').textContent = d.story || '';
+      $('.viewer-story').hidden = !d.story;
+      $('.viewer-inquire').href = 'contact.html#' + d.photo;
+    };
+    triggers.forEach(function (t) {
+      t.addEventListener('click', function () {
+        show(items.findIndex(function (it) { return it.dataset.photo === t.dataset.photo; }), true);
+        setMode('open');
+        tint('#050606', '#ffffff');
+        // Its signature starts white on the black, then turns black as the light wash comes in.
+        $('.viewer-sig').classList.remove('on-light');
+        viewer.showModal();
+        var d = items[index].dataset;
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            tint(d.wash, d.ink);
+            $('.viewer-sig').classList.add('on-light');
+          });
+        });
+      });
+    });
+    $('[data-act="prev"]').addEventListener('click', function () { show(index - 1); });
+    $('[data-act="next"]').addEventListener('click', function () { show(index + 1); });
+    $('[data-act="close"]').addEventListener('click', function () { viewer.close(); });
+    viewer.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowLeft') show(index - 1);
+      if (e.key === 'ArrowRight') show(index + 1);
+    });
+  }
+
+  // The World: dots and labels sit over an inline map that flies between views.
+  var atlas = document.getElementById('atlas');
+  if (atlas) {
+    var svg = atlas.querySelector('svg');
+    var FULL = svg.getAttribute('viewBox').split(' ').map(Number);
+    var vb = FULL.slice(), flight = 0;
+    var placed = Array.prototype.slice.call(atlas.querySelectorAll('[data-x]'));
+    var dots = placed.filter(function (el) { return el.classList.contains('atlas-dot'); });
+    var viewButtons = Array.prototype.slice.call(document.querySelectorAll('[data-vb]'));
+    var card = atlas.querySelector('.atlas-card');
+    var canHover = window.matchMedia('(hover: hover)').matches;
+
+    var draw = function () {
+      svg.setAttribute('viewBox', vb.join(' '));
+      svg.style.setProperty('--zw', vb[2] / FULL[2]);
+      placed.forEach(function (el) {
+        var x = (el.dataset.x - vb[0]) / vb[2], y = (el.dataset.y - vb[1]) / vb[3];
+        el.style.left = x * 100 + '%';
+        el.style.top = y * 100 + '%';
+        el.classList.toggle('is-out', x < -0.01 || x > 1.01 || y < -0.01 || y > 1.01);
+      });
+    };
+    // Dots that would overlap in a view fan out into a small ring, so each stays clickable.
+    var spread = function (view) {
+      var w = atlas.clientWidth, h = atlas.clientHeight, groups = [];
+      dots.forEach(function (d) {
+        var p = { el: d, x: ((d.dataset.x - view[0]) / view[2]) * w, y: ((d.dataset.y - view[1]) / view[3]) * h };
+        var g = groups.find(function (g) { return Math.hypot(g[0].x - p.x, g[0].y - p.y) < 14; });
+        if (g) g.push(p); else groups.push([p]);
+      });
+      groups.forEach(function (g) {
+        var r = g.length > 1 ? 5 + g.length * 2 : 0, cx = 0, cy = 0;
+        g.forEach(function (p) { cx += p.x / g.length; cy += p.y / g.length; });
+        g.forEach(function (p, i) {
+          var a = -Math.PI / 2 + (i * 2 * Math.PI) / g.length;
+          p.el.style.setProperty('--dx', (cx + r * Math.cos(a) - p.x).toFixed(1) + 'px');
+          p.el.style.setProperty('--dy', (cy + r * Math.sin(a) - p.y).toFixed(1) + 'px');
+        });
+      });
+    };
+    var hideCard = function () { card.classList.remove('is-on'); };
+    var showCard = function (d) {
+      if (!canHover) return;
+      var img = card.querySelector('img');
+      img.src = d.dataset.thumb;
+      img.style.aspectRatio = d.dataset.ar;
+      card.style.width = (d.dataset.ar >= 1 ? 260 : 170) + 'px';
+      card.querySelector('.atlas-card-title').textContent = d.dataset.title;
+      card.querySelector('.atlas-card-location').textContent = d.dataset.location;
+      var a = atlas.getBoundingClientRect(), r = d.getBoundingClientRect();
+      var x = r.left + r.width / 2 - a.left, y = r.top + r.height / 2 - a.top;
+      var cw = card.offsetWidth, ch = card.offsetHeight;
+      card.style.left = Math.max(0, Math.min(a.width - cw, x - cw / 2)) + 'px';
+      card.style.top = (r.top - ch - 16 > 0 ? y - ch - 16 : y + 18) + 'px';
+      card.classList.add('is-on');
+    };
+    var flyTo = function (target) {
+      atlas.classList.toggle('is-zoomed', target[2] < FULL[2]);
+      spread(target);
+      hideCard();
+      cancelAnimationFrame(flight);
+      if (reduced) { vb = target; draw(); return; }
+      var from = vb.slice(), start = performance.now();
+      var fc = [from[0] + from[2] / 2, from[1] + from[3] / 2], tc = [target[0] + target[2] / 2, target[1] + target[3] / 2];
+      // Between far-apart views the map pulls back on the way, then settles in.
+      var lift = Math.max(1, Math.hypot(tc[0] - fc[0], tc[1] - fc[1]) / Math.max(from[2], target[2]));
+      var step = function (now) {
+        var t = Math.min(1, (now - start) / 1300);
+        var e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        var w = Math.min(FULL[2], from[2] * Math.pow(target[2] / from[2], e) * Math.pow(lift, Math.sin(Math.PI * e)));
+        var h = (w * FULL[3]) / FULL[2];
+        var cx = fc[0] + (tc[0] - fc[0]) * e, cy = fc[1] + (tc[1] - fc[1]) * e;
+        vb = t < 1 ? [cx - w / 2, cy - h / 2, w, h] : target;
+        draw();
+        if (t < 1) flight = requestAnimationFrame(step);
+      };
+      flight = requestAnimationFrame(step);
+    };
+
+    viewButtons.forEach(function (b) {
+      b.addEventListener('click', function () {
+        viewButtons.forEach(function (o) {
+          if (o.hasAttribute('aria-pressed')) o.setAttribute('aria-pressed', String(o === b));
+        });
+        flyTo(b.dataset.vb.split(' ').map(Number));
+      });
+    });
+    dots.forEach(function (d) {
+      d.addEventListener('mouseenter', function () { showCard(d); });
+      d.addEventListener('focus', function () { showCard(d); });
+      d.addEventListener('mouseleave', hideCard);
+      d.addEventListener('blur', hideCard);
+      d.addEventListener('click', hideCard);
+    });
+    window.addEventListener('resize', function () { spread(vb); draw(); });
+    spread(vb);
+    draw();
+  }
+
+  // Inquiry form. Sends to formEndpoint once one is configured.
+  var form = document.getElementById('inquiry-form');
+  if (form) {
+    var ref = document.getElementById('inq-ref');
+    // Arriving from a photo fills in its title; the catalog ID travels along unseen.
+    var hash = location.hash.slice(1);
+    if (/^JJ-[A-Z0-9-]+$/.test(hash)) {
+      var titles = {};
+      try { titles = JSON.parse(document.getElementById('photo-titles').textContent); } catch (e) { /* no titles */ }
+      ref.value = titles[hash] || '';
+      document.getElementById('inq-id').value = hash;
+    }
+    var status = document.getElementById('form-status');
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var endpoint = form.dataset.endpoint;
+      status.hidden = false;
+      if (!endpoint) {
+        status.textContent = 'Preview only: nothing was sent. This form is not connected yet. After launch, inquiries will go to ' + form.dataset.preview + '.';
+        return;
+      }
+      status.textContent = 'Sending your inquiry…';
+      fetch(endpoint, { method: 'POST', headers: { Accept: 'application/json' }, body: new FormData(form) })
+        .then(function (r) {
+          if (!r.ok) throw new Error('send failed');
+          return r.json().catch(function () { return {}; });
+        })
+        .then(function (data) {
+          if (data && (data.success === false || data.success === 'false')) throw new Error('send failed');
+          form.reset();
+          status.textContent = 'Thank you. Your inquiry has been sent.';
+        })
+        .catch(function () {
+          status.textContent = 'Your inquiry could not be sent. Please try again, or message Josh on Instagram.';
+        });
+    });
+  }
+})();
