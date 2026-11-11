@@ -374,33 +374,92 @@
     };
     // Every photo fades in, including one the browser already has. The hidden state is drawn for
     // at least a frame before the fade starts; without that, a cached photo skips straight to full
-    // opacity. swapId drops a reveal that a quicker swipe has already replaced.
-    var swapId = 0;
-    var reveal = function (id) {
-      if (id !== swapId) return;
-      requestAnimationFrame(function () {
+    // opacity. Each image counts its swaps, so a quicker swipe cancels an older reveal.
+    var swap = function (im, d, sizes, then) {
+      var id = im.swapId = (im.swapId || 0) + 1;
+      im.classList.remove('is-ready');
+      im.classList.add('is-swapping');
+      void im.offsetWidth; // commit the hidden state before the new photo arrives
+      im.srcset = d.srcset || '';
+      im.sizes = sizes;
+      im.src = d.src;
+      im.alt = d.alt;
+      var ready = function () {
+        if (id !== im.swapId) return;
         requestAnimationFrame(function () {
-          if (id !== swapId) return;
-          img.classList.remove('is-swapping');
-          img.classList.add('is-ready');
+          requestAnimationFrame(function () {
+            if (id !== im.swapId) return;
+            im.classList.remove('is-swapping');
+            im.classList.add('is-ready');
+            if (then) then();
+          });
         });
-      });
+      };
+      if (im.decode) im.decode().then(ready, ready);
+      else if (im.complete && im.naturalWidth) ready();
+      else { im.addEventListener('load', ready, { once: true }); im.addEventListener('error', ready, { once: true }); }
     };
+
+    // Full screen, on phones only: tapping a portrait photo shows it alone on black, as large as
+    // the screen allows. The signature and the controls stay on top and turn white or black for
+    // whatever part of the photo sits under them. A tap anywhere else (or Escape) goes back.
+    var phoneQuery = window.matchMedia('(max-width: 760px) and (pointer: coarse)');
+    var full = document.createElement('div');
+    full.className = 'viewer-full';
+    full.innerHTML = '<img alt="" draggable="false">';
+    viewer.insertBefore(full, viewer.firstChild);
+    var fullImg = full.querySelector('img');
+    var sig = $('.viewer-sig'), controls = $('.viewer-controls');
+    var isFull = function () { return viewer.classList.contains('is-full'); };
+    var isPortrait = function () { return +items[index].dataset.ar < 1; };
+    // How light the photo is under an element; the black around a photo that doesn't reach the
+    // element counts as dark.
+    var fullLuma = function (el) {
+      var r = el.getBoundingClientRect(), b = fullImg.getBoundingClientRect();
+      if (!fullImg.naturalWidth || !r.width || !r.height) return 0;
+      var ar = fullImg.naturalWidth / fullImg.naturalHeight;
+      var w = Math.min(b.width, b.height * ar), h = w / ar;
+      var left = b.left + (b.width - w) / 2, top = b.top + (b.height - h) / 2;
+      var ow = Math.min(r.right, left + w) - Math.max(r.left, left), oh = Math.min(r.bottom, top + h) - Math.max(r.top, top);
+      if (ow <= 0 || oh <= 0) return 0;
+      return lumaOf(fullImg, r) * (ow * oh) / (r.width * r.height);
+    };
+    var fullContrast = function () {
+      if (!isFull()) return;
+      sig.classList.toggle('on-light', fullLuma(sig) > 0.55);
+      controls.classList.toggle('on-light', fullLuma(controls) > 0.55);
+    };
+    var setFull = function (on) {
+      if (on === isFull()) return;
+      viewer.classList.toggle('is-full', on);
+      if (on) {
+        swap(fullImg, items[index].dataset, '100vw', fullContrast);
+      } else {
+        sig.classList.add('on-light'); // the normal view sits on a light wash
+        controls.classList.remove('on-light');
+      }
+    };
+    img.addEventListener('click', function () {
+      if (phoneQuery.matches && isPortrait() && img.classList.contains('is-ready')) setFull(true);
+    });
+    full.addEventListener('click', function () { setFull(false); });
+    viewer.addEventListener('cancel', function (e) {
+      if (isFull()) { e.preventDefault(); setFull(false); }
+    });
+    viewer.addEventListener('close', function () { setFull(false); });
+    phoneQuery.addEventListener('change', function () { if (!phoneQuery.matches) setFull(false); });
+    window.addEventListener('resize', fullContrast);
+
     var show = function (i, quiet) {
       index = (i + items.length) % items.length;
       var d = items[index].dataset;
-      var id = ++swapId;
-      img.classList.remove('is-ready');
-      img.classList.add('is-swapping');
-      void img.offsetWidth; // commit the hidden state before the new photo arrives
-      img.srcset = d.srcset || '';
-      img.sizes = '(max-width: 760px) 100vw, calc(100vw - 340px)';
-      img.src = d.src;
-      img.alt = d.alt;
-      var ready = function () { reveal(id); };
-      if (img.decode) img.decode().then(ready, ready);
-      else if (img.complete && img.naturalWidth) ready();
-      else { img.addEventListener('load', ready, { once: true }); img.addEventListener('error', ready, { once: true }); }
+      swap(img, d, '(max-width: 760px) 100vw, calc(100vw - 340px)');
+      // Moving on while in full screen stays there for another portrait photo, and goes back to
+      // the normal view for a landscape one.
+      if (isFull()) {
+        if (isPortrait()) swap(fullImg, d, '100vw', fullContrast);
+        else setFull(false);
+      }
       if (!quiet) tint(d.wash, d.ink);
       $('.viewer-title').textContent = d.title;
       $('.viewer-location').textContent = d.location || '';
